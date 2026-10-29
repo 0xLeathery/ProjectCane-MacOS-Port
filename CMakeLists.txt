@@ -204,6 +204,26 @@ if(APPLE)
     add_executable(cane_platform_tests tests/platform_test.cpp)
     target_link_libraries(cane_platform_tests PRIVATE cane_platform)
     add_test(NAME cane_platform_tests COMMAND cane_platform_tests)
+
+    # The shader tests cover the GL 4.1 path (CANE_GL41) and its gl41 copies.
+    # CANE_SHADER_TOOLS_ONLY limits glshaders.h to its GL-free helpers so these
+    # tests don't drag in the game headers.
+    add_executable(cane_shader_source_tests tests/shader_source_test.cpp)
+    target_link_libraries(cane_shader_source_tests PRIVATE cane_platform)
+    target_compile_definitions(cane_shader_source_tests PRIVATE
+        CANE_GL41
+        CANE_SHADER_TOOLS_ONLY
+        "CANE_SHADER_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Sly1-Release\"")
+    add_test(NAME cane_shader_source_tests COMMAND cane_shader_source_tests)
+
+    add_executable(cane_shader_tests tests/shader_gl_test.cpp tests/background_app.cpp
+        "${CMAKE_BINARY_DIR}/generated/embedded_shaders.h")
+    target_link_libraries(cane_shader_tests PRIVATE cane_ui)
+    target_compile_definitions(cane_shader_tests PRIVATE CANE_GL41 CANE_SHADER_TOOLS_ONLY)
+    target_include_directories(cane_shader_tests PRIVATE "${CMAKE_BINARY_DIR}/generated")
+    add_test(NAME cane_shader_tests COMMAND cane_shader_tests)
+    # Exit 77 means no display or no 4.1 context, e.g. headless CI.
+    set_tests_properties(cane_shader_tests PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 install(TARGETS ProjectCane Sly1BrxRebuilder Sly1PalExtractor RUNTIME DESTINATION bin)
