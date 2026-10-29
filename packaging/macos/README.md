@@ -63,3 +63,33 @@ Settings → Privacy & Security. While the flag is set and the app has not been
 moved in Finder, macOS runs it from a temporary read-only copy, so data placed
 beside the app is not found; use `~/Library/Application Support/ProjectCane`
 in that case.
+
+## File Extractor
+
+`build-extractor-app.sh` packages the File Extractor (the .NET app that turns
+a Sly 1 ISO into the `Worlds`, `Cutscenes` and `extraction_manifest.json` the
+game reads) as `dist/ProjectCane File Extractor.app`. It also needs the .NET
+SDK 9 or newer (<https://dotnet.microsoft.com/download>); the CMake step that
+builds its two native tools uses the same packages as the game.
+
+```bash
+packaging/macos/build-extractor-app.sh
+```
+
+Like the game's, the bundle is checked by `check-app.sh` before the script
+reports success. To check it on its own:
+
+```bash
+packaging/macos/check-app.sh --require Contents/MacOS/Sly1BrxRebuilder \
+    --require Contents/MacOS/Sly1PalExtractor "dist/ProjectCane File Extractor.app"
+```
+
+The app carries its own .NET runtime, so nothing else has to be installed to
+run it. It extracts into `~/Library/Application Support/ProjectCane` by
+default, where the game looks first; Change Folder picks another folder. Like
+the game it is signed ad hoc and not notarised, so remove the quarantine flag
+once after moving it to where it will stay:
+
+```bash
+xattr -dr com.apple.quarantine "ProjectCane File Extractor.app"
+```
