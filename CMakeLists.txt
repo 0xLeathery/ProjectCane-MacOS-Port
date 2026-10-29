@@ -302,6 +302,26 @@ if(APPLE)
     # 46 levels for 15 s of play each (about 7 minutes), and 46 levels driven,
     # saved and reloaded (about 7 minutes).
     set_tests_properties(cane_world_sweep_behaviour cane_world_sweep_unlock PROPERTIES TIMEOUT 2700)
+
+    # The macos-asan preset compiles everything built from source with
+    # AddressSanitizer and UndefinedBehaviorSanitizer and sets CANE_SANITIZE.
+    # Reports go to stderr: a test that prints one fails on the regular
+    # expression below, and the world sweep's children write theirs to their
+    # per-level logs, which the sweep counts as failures. LeakSanitizer is not
+    # supported on arm64 macOS. The suppressions list only known findings in
+    # third-party or system code and in the game's shared code (written up
+    # for upstream); Mac-only code is never suppressed. See tests/README.md.
+    option(CANE_SANITIZE "Set sanitizer runtime options on the tests" OFF)
+    if(CANE_SANITIZE)
+        set(sanitizer_dir "${CMAKE_CURRENT_SOURCE_DIR}/tests/sanitizers")
+        get_property(cane_tests DIRECTORY PROPERTY TESTS)
+        set_property(TEST ${cane_tests} APPEND PROPERTY ENVIRONMENT
+            "ASAN_OPTIONS=detect_leaks=0:halt_on_error=0:abort_on_error=1:allow_user_segv_handler=0:check_initialization_order=1:strict_init_order=1:detect_stack_use_after_return=1:print_suppressions=0:suppressions=${sanitizer_dir}/asan.supp"
+            "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=0:report_error_type=1:print_suppressions=0:suppressions=${sanitizer_dir}/ubsan.supp")
+        # With halt_on_error=0 a test keeps running and can exit 0 after a report.
+        set_tests_properties(${cane_tests} PROPERTIES
+            FAIL_REGULAR_EXPRESSION "runtime error: |==ERROR: (Address|UndefinedBehavior)Sanitizer: ")
+    endif()
 endif()
 
 install(TARGETS ProjectCane Sly1BrxRebuilder Sly1PalExtractor RUNTIME DESTINATION bin)

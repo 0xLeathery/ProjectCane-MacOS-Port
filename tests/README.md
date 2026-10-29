@@ -191,3 +191,56 @@ function the game calls then checks `glGetError` right after itself, and the
 child's log gets the function, the error and the call stack (for a draw that
 fails with `GL_INVALID_OPERATION`, also the bound program, vertex array and
 the driver's `glValidateProgram` message). It is slow; the errors still count.
+
+## Sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)
+
+The `macos-asan` preset builds everything compiled from source (the game,
+the tests, imgui, glad, GLFW and FAudio) with
+`-fsanitize=address,undefined -fsanitize-recover=address` as RelWithDebInfo
+in `build/macos-asan`. FFmpeg comes from Homebrew (pkg-config) and the
+OpenGL driver from the system. SDL2 is the installed one when CMake finds an
+SDL2 config package (with Homebrew that is `sdl2-compat`); otherwise CMake
+fetches SDL 2.30.11 and builds it with the same flags. Installed libraries are
+not instrumented, but ASan's interceptors still check what they do through
+`malloc`, `memcpy` and friends.
+
+```sh
+cmake --preset macos-asan
+cmake --build --preset macos-asan
+CANE_TEST_DATA_DIR=/path/to/extracted-game \
+  ctest --test-dir build/macos-asan --output-on-failure
+```
+
+`CANE_SANITIZE=ON` (set by the preset) gives every test these runtime options
+and a `FAIL_REGULAR_EXPRESSION` matching a report (`runtime error: ` or
+`==ERROR: AddressSanitizer: ` / `UndefinedBehaviorSanitizer: `), because with
+`halt_on_error=0` a test that hits a report keeps running and can still exit
+0. Run the tests through `ctest` (as above) to get that check; running a test
+binary by hand only prints the reports:
+
+- `ASAN_OPTIONS`: `detect_leaks=0` (LeakSanitizer is not supported on arm64
+  macOS), `halt_on_error=0` (with `-fsanitize-recover=address`, so one level
+  reports all its errors), `abort_on_error=1`, `allow_user_segv_handler=0`
+  (ASan reports a SEGV itself instead of the game's handler),
+  `check_initialization_order=1:strict_init_order=1`,
+  `detect_stack_use_after_return=1`, and `suppressions=tests/sanitizers/asan.supp`.
+- `UBSAN_OPTIONS`: `print_stacktrace=1:halt_on_error=0:report_error_type=1`
+  and `suppressions=tests/sanitizers/ubsan.supp`.
+
+Reports go to stderr. The world sweep runs the game in child processes whose
+stdout and stderr go to `world-sweep/logs/*.log`, and every check counts the
+reports in its children's logs and fails on any. The levels check attributes
+each report to the level that was running (`levels.json`: `sanitizer_reports`
+and `sanitizer_report` per level, `startup_sanitizer_reports` before the first
+level). UBSan prints each source location once per process, so a problem shared
+by many levels shows up under the first level that hit it.
+
+To run the sanitizer build by hand, export the same options first (copy them
+from `build/macos-asan/CTestTestfile.cmake`) and look for those lines in the
+output yourself.
+
+`tests/sanitizers/*.supp` lists the known reports that are not fixed here:
+findings in the game's shared code (filed upstream, not fixed in the
+macOS port) and in third-party or system code. Each entry says why it is
+there. Mac-only code (`CANE_GL41` blocks, `Sly1-Release/gl41`, `platform/`
+`__APPLE__` paths, `tests/`) must stay clean and is never suppressed.

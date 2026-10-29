@@ -22,6 +22,20 @@
       }
     },
     {
+      "name": "macos-asan",
+      "displayName": "macOS AddressSanitizer + UndefinedBehaviorSanitizer (Apple Silicon)",
+      "inherits": "macos-release",
+      "binaryDir": "${sourceDir}/build/macos-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fsanitize-recover=address -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fsanitize-recover=address -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CANE_SANITIZE": "ON"
+      }
+    },
+    {
       "name": "windows-release",
       "displayName": "Windows Release (CMake)",
       "generator": "Visual Studio 17 2022",
@@ -32,6 +46,7 @@
   "buildPresets": [
     { "name": "linux-release", "configurePreset": "linux-release" },
     { "name": "macos-release", "configurePreset": "macos-release" },
+    { "name": "macos-asan", "configurePreset": "macos-asan" },
     {
       "name": "windows-release",
       "configurePreset": "windows-release",
