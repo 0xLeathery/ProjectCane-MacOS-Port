@@ -121,6 +121,10 @@ target_compile_definitions(ProjectCane PRIVATE
     CANE_PORTABLE_SHADERS
     _CRT_SECURE_NO_WARNINGS
     _ENABLE_EXTENDED_ALIGNED_STORAGE)
+if(APPLE)
+    # macOS caps OpenGL at 4.1 core; code keys the 4.1 path off CANE_GL41, not __APPLE__.
+    target_compile_definitions(ProjectCane PRIVATE CANE_GL41)
+endif()
 target_include_directories(ProjectCane PRIVATE "${CMAKE_BINARY_DIR}/generated")
 
 if(NOT MSVC)
@@ -130,10 +134,20 @@ endif()
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
 file(GLOB shader_inputs CONFIGURE_DEPENDS
     "Sly1-Release/*.vert" "Sly1-Release/*.frag" "Sly1-Release/*.geom")
+set(gl41_shader_args "")
+if(APPLE)
+    # The GL 4.1 copies in Sly1-Release/gl41 replace their shared shaders in
+    # the macOS build only.
+    file(GLOB gl41_shader_inputs CONFIGURE_DEPENDS
+        "Sly1-Release/gl41/*.vert" "Sly1-Release/gl41/*.frag" "Sly1-Release/gl41/*.geom")
+    list(APPEND shader_inputs ${gl41_shader_inputs})
+    set(gl41_shader_args "-DGL41_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/Sly1-Release/gl41")
+endif()
 add_custom_command(
     OUTPUT "${CMAKE_BINARY_DIR}/generated/embedded_shaders.h"
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/Sly1-Release
+        ${gl41_shader_args}
         -DOUTPUT=${CMAKE_BINARY_DIR}/generated/embedded_shaders.h
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-shaders.cmake
     DEPENDS ${shader_inputs} cmake/embed-shaders.cmake
