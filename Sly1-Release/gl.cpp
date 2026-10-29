@@ -121,7 +121,13 @@ void GL::InitGL()
 	if (glfwInit() != GLFW_TRUE)
 		throw std::runtime_error("GLFW could not initialize. See the diagnostic console for details.");
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+#ifdef CANE_GL41
+	// macOS caps OpenGL at 4.1 and only grants core contexts that are forward compatible.
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#else
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+#endif
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_AUTO_ICONIFY, g_fAutoIconify ? GLFW_TRUE : GLFW_FALSE);
 
@@ -145,11 +151,19 @@ void GL::InitGL()
 	{
 		const char* description = nullptr;
 		const int error = glfwGetError(&description);
+#ifdef CANE_GL41
+		ReportRuntimeError("Graphics", "Could not create the OpenGL 4.1 window (GLFW error %d: %s)",
+			error, description != nullptr ? description : "No description was provided");
+		glfwTerminate();
+		throw std::runtime_error(
+			"The game window could not be created. Update the graphics driver and verify OpenGL 4.1 support.");
+#else
 		ReportRuntimeError("Graphics", "Could not create the OpenGL 4.3 window (GLFW error %d: %s)",
 			error, description != nullptr ? description : "No description was provided");
 		glfwTerminate();
 		throw std::runtime_error(
 			"The game window could not be created. Update the graphics driver and verify OpenGL 4.3 support.");
+#endif
 	}
 
 	glfwMakeContextCurrent(window);
@@ -161,11 +175,26 @@ void GL::InitGL()
 
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
 	{
+#ifdef CANE_GL41
+		ReportRuntimeError("Graphics",
+			"GLAD could not load the required OpenGL functions. Update the graphics driver and verify OpenGL 4.1 support.");
+#else
 		ReportRuntimeError("Graphics",
 			"GLAD could not load the required OpenGL functions. Update the graphics driver and verify OpenGL 4.3 support.");
+#endif
 		throw std::runtime_error("OpenGL function loading failed.");
 	}
 
+#ifdef CANE_GL41
+	// glad only loads glTexStorage2D/3D for GL 4.2+; the 4.1 driver still exports them.
+	if (!LoadTexStorageFallback((GLADloadproc)glfwGetProcAddress))
+	{
+		ReportRuntimeError("Graphics",
+			"glTexStorage2D/glTexStorage3D are unavailable on this OpenGL 4.1 driver (GL_ARB_texture_storage is required).");
+		throw std::runtime_error("OpenGL function loading failed.");
+	}
+
+#endif
 	// GLFW window dimensions are logical screen coordinates and can differ
 	// from the drawable pixel dimensions on a DPI-scaled display. Initialize
 	// every framebuffer-related dimension from the actual drawable size so the
@@ -194,6 +223,10 @@ void GL::InitGL()
 		<< "OpenGL renderer: " << (glRenderer != nullptr ? glRenderer : "unknown") << '\n'
 		<< "OpenGL version: " << (glVersion != nullptr ? glVersion : "unknown") << std::endl;
 
+#ifdef CANE_GL41
+	// GL 4.1 has no SSBOs, so the SSBO limit queries below would be
+	// GL_INVALID_ENUM and read 0; the 4.1 renderer reads buffer textures instead.
+#else
 	// The main renderer intentionally uses vertex-stage SSBOs for lights,
 	// shadows, skinning, poses, warps, and cached lighting. OpenGL 4.3 exposes
 	// implementation-dependent per-stage limits, so reject an incapable driver
@@ -227,13 +260,18 @@ void GL::InitGL()
 			maxVertexOutputComponents, kRequiredVertexOutputComponents);
 		throw std::runtime_error("GPU shader resource limits are insufficient.");
 	}
+#endif
 
 	// ========== ImGui Setup ==========
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO();
 	ImGui_ImplGlfw_InitForOpenGL(window, true);
+#ifdef CANE_GL41
+	ImGui_ImplOpenGL3_Init("#version 410");
+#else
 	ImGui_ImplOpenGL3_Init("#version 430");
+#endif
 	ImGui::StyleColorsDark();
 
 	const float imguiOffset = g_fDebugGuiOpen ? ImGui::GetFrameHeight() : 0.0f;
@@ -393,7 +431,12 @@ void GL::InitGL()
 	glslDyshModel        = glGetUniformLocation(glDyshadow.ID, "model");
 	glslDyshfSkin        = glGetUniformLocation(glDyshadow.ID, "fSkin");
 
+#ifdef CANE_GL41
+	// The material cache bake (render.cpp's DrawGlob) captures these.
+	glGlobShader.Init("glob.vert", NULL, "glob.frag", kGlobFeedbackVaryings, kGlobFeedbackVaryingCount);
+#else
 	glGlobShader.Init("glob.vert", NULL, "glob.frag");
+#endif
 	ropStream.bindIndex = 1;
 	GLint align = 256;
 	glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &align);
@@ -420,6 +463,10 @@ void GL::InitGL()
 	glslUnSelfIllum		 = glGetUniformLocation(glGlobShader.ID, "unSelfIllum");
 	glslSubGlobPosCenter = glGetUniformLocation(glGlobShader.ID, "subGlobPosCenter");
 	glslSubGlobRadius    = glGetUniformLocation(glGlobShader.ID, "subGlobRadius");
+#ifdef CANE_GL41
+	glslfCacheBake       = glGetUniformLocation(glGlobShader.ID, "fCacheBake");
+	glUniform1i(glslfCacheBake, 0);
+#endif
 
 	glslAmbientMap  = glGetUniformLocation(glGlobShader.ID, "ambientMap");
 	glslDiffuseMap  = glGetUniformLocation(glGlobShader.ID, "diffuseMap");
@@ -430,7 +477,16 @@ void GL::InitGL()
 
 	glUniform1i(glGetUniformLocation(glGlobShader.ID, "shadowTextureArray"), SHADOW_TEXTURE_UNIT);
 
+#ifdef CANE_GL41
+	// GL 4.1 core only allows 1 px lines; the geometry stage draws the
+	// outlines at their full width instead (see SetCelBorderLineWidth).
+	glCelBorderShader.Init("celborder.vert", kCelBorderGeometryShader, "celborder.frag");
+	glslCelLineWidthPx = glGetUniformLocation(glCelBorderShader.ID, kCelLineWidthUniform);
+	glslCelViewportPx  = glGetUniformLocation(glCelBorderShader.ID, kCelViewportUniform);
+	glslCelMultisampled = glGetUniformLocation(glCelBorderShader.ID, kCelMultisampledUniform);
+#else
 	glCelBorderShader.Init("celborder.vert", NULL, "celborder.frag");
+#endif
 	rcbStream.bindIndex = 1;
 	align = 256;
 	glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &align);
@@ -788,6 +844,10 @@ void GL::TerminateGL()
 	glGeomShader.Delete();
 	glBlotShader.Delete();
 	glBlipShader.Delete();
+#ifdef CANE_GL41
+	// The placeholders bound on empty buffer-sampler and shadow units (glshaders.h).
+	DeletePlaceholderBufferTextures();
+#endif
 
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
@@ -1353,6 +1413,9 @@ GLuint glsluvOffsets = 0;
 GLuint glslUnSelfIllum = 0;
 GLuint glslSubGlobPosCenter = 0;
 GLuint glslSubGlobRadius = 0;
+#ifdef CANE_GL41
+GLuint glslfCacheBake = 0;
+#endif
 GLuint glslDyshMatWorldClip = 0;
 GLuint glslDyshModel = 0;
 GLuint glslDyshfSkin = 0;
@@ -1390,3 +1453,8 @@ GLuint glslfPose = 0;
 GLuint glslPoseCount = 0;
 GLuint glslCelPose = 0;
 GLuint glslCelPoseCount = 0;
+#ifdef CANE_GL41
+GLint glslCelLineWidthPx = -1;
+GLint glslCelViewportPx = -1;
+GLint glslCelMultisampled = -1;
+#endif
