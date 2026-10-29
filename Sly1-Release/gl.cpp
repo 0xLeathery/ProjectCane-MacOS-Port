@@ -10,6 +10,18 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#ifdef __APPLE__
+#include <string>
+#include "../platform/platform.h"
+
+// AppKit through the Objective-C runtime's C API. objc's own headers can't be
+// included here: their BOOL clashes with the game's (spaprops.h).
+struct objc_object;
+struct objc_selector;
+extern "C" objc_object* objc_getClass(const char* name);
+extern "C" objc_selector* sel_registerName(const char* name);
+extern "C" void objc_msgSend(void);
+#endif
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -34,6 +46,23 @@ int s_windowedWidth = 800;
 int s_windowedHeight = 800;
 bool s_lastFramebufferResizeSucceeded = true;
 double s_autoIconifySuppressedUntil = 0.0;
+#ifdef __APPLE__
+
+// Hides the menu bar and the Dock while the game is the active app
+// (NSApp.presentationOptions = NSApplicationPresentationHideDock |
+// NSApplicationPresentationHideMenuBar); macOS shows them again by itself
+// whenever another app is active.
+void SetMenuBarAndDockHidden(bool hidden)
+{
+	objc_object* app = reinterpret_cast<objc_object* (*)(objc_object*, objc_selector*)>(objc_msgSend)(
+		objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+	if (app == nullptr)
+		return;
+	const unsigned long options = hidden ? (1ul << 1) | (1ul << 3) : 0ul;
+	reinterpret_cast<void (*)(objc_object*, objc_selector*, unsigned long)>(objc_msgSend)(
+		app, sel_registerName("setPresentationOptions:"), options);
+}
+#endif
 
 GLFWmonitor* MonitorByIndex(int index)
 {
@@ -266,6 +295,15 @@ void GL::InitGL()
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO();
+#ifdef __APPLE__
+	// ImGui saves imgui.ini relative to the working directory, which for an
+	// app started from Finder is / and could also be inside ProjectCane.app,
+	// breaking its signature. Keep it with the saves and settings instead
+	// (ConfigureRuntime has created that folder). ImGui keeps the pointer,
+	// so the string lives for the rest of the program.
+	static const std::string s_imguiIniPath = cane::Utf8(cane::UserDirectory() / "imgui.ini");
+	io.IniFilename = s_imguiIniPath.c_str();
+#endif
 	ImGui_ImplGlfw_InitForOpenGL(window, true);
 #ifdef CANE_GL41
 	ImGui_ImplOpenGL3_Init("#version 410");
@@ -852,6 +890,9 @@ void GL::TerminateGL()
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext();
+#ifdef __APPLE__
+	SetMenuBarAndDockHidden(false);
+#endif
 	glfwDestroyWindow(window);
 	glfwTerminate();
 }
@@ -1141,7 +1182,16 @@ bool ApplyWindowModeSettings(WindowMode mode)
 		glfwSetWindowMonitor(g_gl.window, nullptr, s_windowedX, s_windowedY,
 			(std::max)(s_windowedWidth, 320), (std::max)(s_windowedHeight, 240), GLFW_DONT_CARE);
 	}
+#ifdef __APPLE__
+	// GLFW's exclusive fullscreen on macOS switches the display to the nearest
+	// mode in its own list, which on the built-in display can be another
+	// resolution than the current one. Fullscreen is therefore the borderless
+	// window over the whole display at its current mode, with the menu bar and
+	// Dock hidden while the game is active (below).
+	else if (mode == WindowMode_Borderless || mode == WindowMode_Fullscreen)
+#else
 	else if (mode == WindowMode_Borderless)
+#endif
 	{
 		int x = 0;
 		int y = 0;
@@ -1170,6 +1220,9 @@ bool ApplyWindowModeSettings(WindowMode mode)
 		return false;
 
 	g_windowMode = mode;
+#ifdef __APPLE__
+	SetMenuBarAndDockHidden(mode == WindowMode_Fullscreen);
+#endif
 	glfwSwapInterval(g_fVsync ? 1 : 0);
 	return true;
 }
