@@ -1895,6 +1895,14 @@ void DrawCelBorder(RPLCEL* prplcel)
 	glUniform1i(glslCelSkin, fSkin ? 1 : 0);
 	glUniform1i(glslCelPose, fPose ? 1 : 0);
 #ifdef CANE_GL41
+	// The 4.1 core driver rejects draws with no vertex array bound
+	// (GL_INVALID_OPERATION), and DrawSqtr ends with a raw
+	// glBindVertexArray(0) the cache does not see. celborder.vert reads no
+	// attributes, so any vertex array will do; bind it raw so a stale cache
+	// entry cannot skip the bind, and keep the cache in step.
+	glBindVertexArray(g_gl.gao);
+	s_renderState.vao = g_gl.gao;
+
 	// celborder.geom's quads are counter-clockwise on screen, which
 	// GL_CULL_FACE keeps only with back faces culled and CCW front faces
 	// (the shared build's GL_LINES are never culled). Draw with that state
