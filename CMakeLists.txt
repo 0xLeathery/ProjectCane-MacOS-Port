@@ -198,4 +198,12 @@ if(MSVC)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
+if(APPLE)
+    # The tests cover the macOS port only, so other targets build exactly as before.
+    enable_testing()
+    add_executable(cane_platform_tests tests/platform_test.cpp)
+    target_link_libraries(cane_platform_tests PRIVATE cane_platform)
+    add_test(NAME cane_platform_tests COMMAND cane_platform_tests)
+endif()
+
 install(TARGETS ProjectCane Sly1BrxRebuilder Sly1PalExtractor RUNTIME DESTINATION bin)
