@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds dist/ProjectCane.app for Apple Silicon Macs running macOS 27 or newer.
+# Builds dist/ProjectCane.app for Apple Silicon Macs running macOS 26 or newer.
 #
-# The normal macos-release build links FFmpeg and sdl2-compat from Homebrew by
-# absolute /opt/homebrew paths, so it only starts on a Mac with the same
-# Homebrew packages installed. This script copies those libraries (and the
-# libraries they need) into the bundle, points every reference at the copies,
-# signs the result ad hoc and checks that nothing outside the bundle is used.
-# It only uses tools that ship with macOS and the Xcode command line tools.
+# The normal macos-release build links FFmpeg and sdl2-compat from Homebrew,
+# whose builds require the macOS version they were built on. This script
+# builds those libraries for macOS 26 with build-deps.sh, builds the game
+# against them with the macos-app preset, copies them (and the libraries they
+# need) into the bundle, points every reference at the copies, signs the
+# result ad hoc and checks that nothing outside the bundle is used. Apart
+# from cmake and ninja it only uses tools that ship with macOS and the Xcode
+# command line tools.
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="$(cd "${script_dir}/../.." && pwd)"
-build_dir="${source_dir}/build/macos-release"
+build_dir="${source_dir}/build/macos-app"
+deps_prefix="${source_dir}/build/macos-deps/prefix"
 output_dir="${PROJECTCANE_OUTPUT_DIR:-${source_dir}/dist}"
 app="${output_dir}/ProjectCane.app"
 game_binary="${build_dir}/bin/ProjectCane"
@@ -31,26 +34,11 @@ for tool in cmake ninja otool install_name_tool codesign plutil sips iconutil li
     fi
 done
 
-if ! command -v brew >/dev/null 2>&1; then
-    echo "Homebrew is required: ProjectCane uses its ffmpeg, sdl2-compat and sdl3 packages." >&2
-    exit 1
-fi
-missing_packages=()
-for package in ffmpeg sdl2-compat sdl3; do
-    if ! brew list --versions "${package}" >/dev/null 2>&1; then
-        missing_packages+=("${package}")
-    fi
-done
-if (( ${#missing_packages[@]} > 0 )); then
-    echo "Missing Homebrew packages: ${missing_packages[*]}" >&2
-    echo "Install them with: brew install ${missing_packages[*]}" >&2
-    exit 1
-fi
+"${script_dir}/build-deps.sh"
 
 # sdl2-compat does not link SDL3. It dlopens it at run time and looks for
 # @loader_path/libSDL3.dylib first, so SDL3 has to be added by hand.
-sdl3_prefix="$(brew --prefix sdl3)"
-sdl3_library="$(realpath "${sdl3_prefix}/lib/libSDL3.dylib")"
+sdl3_library="$(realpath "${deps_prefix}/lib/libSDL3.dylib")"
 sdl3_id="$(otool -D "${sdl3_library}")"
 sdl3_name="$(basename "$(tail -n 1 <<<"${sdl3_id}")")"
 
@@ -62,8 +50,8 @@ fi
 
 (
     cd "${source_dir}"
-    cmake --preset macos-release
-    cmake --build --preset macos-release
+    cmake --preset macos-app
+    cmake --build --preset macos-app
 )
 
 if [[ ! -x "${game_binary}" ]]; then
@@ -127,8 +115,8 @@ while IFS= read -r rpath; do
 done <<<"${executable_rpath_list}"
 
 # Finds the file a load command refers to, as dyld would for a binary
-# installed at original_path. Homebrew mixes /opt/homebrew/opt, Cellar,
-# @rpath and @loader_path references to the same libraries.
+# installed at original_path. Libraries may refer to each other by absolute
+# path, @rpath or @loader_path.
 resolve_reference() {
     local reference="$1" original_path="$2"
     local loader_dir candidate rpath search
@@ -306,4 +294,4 @@ mv "${work_app}" "${app}"
 
 echo
 echo "macOS app created: ${app}"
-echo "Version ${version}; Apple Silicon, macOS 27 or newer; ${#bundled_names[@]} bundled libraries."
+echo "Version ${version}; Apple Silicon, macOS 26 or newer; ${#bundled_names[@]} bundled libraries."

@@ -8,12 +8,13 @@ set -euo pipefail
 # Contents/MacOS only holds Mach-O files: codesign treats everything in that
 # folder as code and cannot seal the loose .dll and .json files of a normal
 # publish. The two native tools it runs, Sly1BrxRebuilder and
-# Sly1PalExtractor, come from the macos-release CMake build and sit beside
-# the executable, where the extractor looks for them.
+# Sly1PalExtractor, come from the macos-app CMake build (the game's, which
+# targets macOS 26) and sit beside the executable, where the extractor looks
+# for them.
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="$(cd "${script_dir}/../.." && pwd)"
-build_dir="${source_dir}/build/macos-release"
+build_dir="${source_dir}/build/macos-app"
 project="${source_dir}/File Extractor GUI/File Extractor GUI.csproj"
 output_dir="${PROJECTCANE_OUTPUT_DIR:-${source_dir}/dist}"
 app="${output_dir}/ProjectCane File Extractor.app"
@@ -45,10 +46,14 @@ if [[ -z "${version}" ]]; then
     exit 1
 fi
 
+# The macos-app preset needs these libraries to configure, though the tools
+# do not link them.
+"${script_dir}/build-deps.sh"
+
 (
     cd "${source_dir}"
-    cmake --preset macos-release
-    cmake --build --preset macos-release --target "${tools[@]}"
+    cmake --preset macos-app
+    cmake --build --preset macos-app --target "${tools[@]}"
 )
 
 for tool in "${tools[@]}"; do

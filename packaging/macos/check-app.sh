@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Checks that a macOS app bundle is self-contained: every library it loads is
-# inside the bundle, everything is arm64, and the bundle is signed. A bundle
+# inside the bundle, everything is arm64, nothing needs a newer macOS than
+# the bundle's LSMinimumSystemVersion, and the bundle is signed. A bundle
 # which still points at Homebrew starts fine on the build machine and fails
 # on every other Mac, so the build scripts run this before reporting success.
 #
@@ -112,6 +113,26 @@ while IFS= read -r -d '' link; do
     fi
 done < "${links_list}"
 
+# The macOS version the bundle says it runs on. dyld refuses to load a
+# library built for a newer one, so a bundle that copies such a library in
+# would install fine and fail to start on older Macs.
+minimum_system="$(plutil -extract LSMinimumSystemVersion raw "${app}/Contents/Info.plist" 2>/dev/null || true)"
+
+# Prints the version as one comparable number: 26.0 -> 26000000.
+version_number() {
+    local major minor patch
+    IFS=. read -r major minor patch <<<"$1"
+    echo $(( ${major:-0} * 1000000 + ${minor:-0} * 1000 + ${patch:-0} ))
+}
+
+# Minimum macOS of a Mach-O file, from its otool -l output: LC_BUILD_VERSION
+# (minos) or, in older files, LC_VERSION_MIN_MACOSX (version).
+minimum_os_in() {
+    sed -nE '/cmd LC_BUILD_VERSION/,/minos/s/^[[:space:]]*minos ([0-9.]+).*$/\1/p
+        /cmd LC_VERSION_MIN_MACOSX/,/version/s/^[[:space:]]*version ([0-9.]+).*$/\1/p' <<<"$1" |
+        head -n 1
+}
+
 # Mach-O files, in parallel arrays (bash 3.2 has no associative arrays):
 # path, whether it is an executable, its LC_RPATHs and its @rpath loads.
 # @loader_path in an LC_RPATH is resolved here; @executable_path depends on
@@ -148,6 +169,14 @@ while IFS= read -r -d '' binary; do
     fi
 
     read_otool "${relative}" -l "${binary}" || continue
+    if [[ -n "${minimum_system}" ]]; then
+        minimum_os="$(minimum_os_in "${otool_output}")"
+        if [[ -n "${minimum_os}" ]] &&
+            (( $(version_number "${minimum_os}") > $(version_number "${minimum_system}") )); then
+            fail "${relative} needs macOS ${minimum_os}, but LSMinimumSystemVersion is ${minimum_system}"
+        fi
+    fi
+
     rpaths="$(rpaths_in "${otool_output}")"
     resolved_rpaths=""
     while IFS= read -r rpath; do
@@ -275,6 +304,8 @@ if [[ ! -f "${app}/Contents/Info.plist" ]]; then
     fail "Contents/Info.plist is missing"
 elif ! plutil -lint "${app}/Contents/Info.plist" >/dev/null; then
     fail "Contents/Info.plist is not a valid property list"
+elif [[ -z "${minimum_system}" ]]; then
+    fail "Contents/Info.plist has no LSMinimumSystemVersion"
 fi
 
 if ! codesign --verify --strict --verbose=2 "${app}" 2>&1; then
@@ -285,4 +316,4 @@ if (( failures > 0 )); then
     echo "${app_name}: ${failures} problem(s) found." >&2
     exit 1
 fi
-echo "${app_name}: self-contained, arm64 and signed."
+echo "${app_name}: self-contained, arm64, macOS ${minimum_system} or newer and signed."
